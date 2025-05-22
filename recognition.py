@@ -4,6 +4,10 @@ import cv2
 import numpy as np
 import numpy
 import math
+import tkinter as tk
+from tkinter import filedialog, Label, Button
+from PIL import Image, ImageTk
+import pyttsx3
 
 
 # Helper
@@ -24,88 +28,137 @@ class FaceRecognition:
     face_names = []
     known_face_encodings = []
     known_face_names = []
-    process_current_frame = True
 
     def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Parent Resemblance Detector")
+        self.root.geometry("800x600")
+        self.root.configure(bg="#f0f0f0")
         self.encode_faces()
+        self.setup_ui()
 
     def encode_faces(self):
+        # Load parent images from 'faces' folder
         for image in os.listdir('faces'):
-            face_image = face_recognition.load_image_file(f"faces/mercy.jpg")
-            face_encoding = face_recognition.face_encodings(face_image)[0]
+            face_image = face_recognition.load_image_file(f"faces/{image}")
+            face_encodings = face_recognition.face_encodings(face_image)
+            if face_encodings:  # Ensure at least one face is detected
+                self.known_face_encodings.append(face_encodings[0])
+                self.known_face_names.append(os.path.splitext(image)[0])
+        print("Known faces:", self.known_face_names)
 
-            self.known_face_encodings.append(face_encoding)
-            self.known_face_names.append(image)
-        print(self.known_face_names)
+    def setup_ui(self):
+        # Title
+        tk.Label(self.root, text="Parent Resemblance Detector", font=("Arial", 20, "bold"), bg="#f0f0f0").pack(pady=10)
+
+        # Frames for images
+        self.parent1_frame = tk.Frame(self.root, bg="#f0f0f0")
+        self.parent1_frame.pack(side=tk.LEFT, padx=20)
+        self.parent2_frame = tk.Frame(self.root, bg="#f0f0f0")
+        self.parent2_frame.pack(side=tk.LEFT, padx=20)
+        self.compare_frame = tk.Frame(self.root, bg="#f0f0f0")
+        self.compare_frame.pack(side=tk.LEFT, padx=20)
+
+        # Image labels
+        self.parent1_label = Label(self.parent1_frame, text="Parent 1: Not loaded", bg="#f0f0f0")
+        self.parent1_label.pack()
+        self.parent2_label = Label(self.parent2_frame, text="Parent 2: Not loaded", bg="#f0f0f0")
+        self.parent2_label.pack()
+        self.compare_label = Label(self.compare_frame, text="Compare Image: Not loaded", bg="#f0f0f0")
+        self.compare_label.pack()
+
+        # Result label
+        self.result_label = tk.Label(self.root, text="Upload images to compare!", font=("Arial", 14), bg="#f0f0f0")
+        self.result_label.pack(pady=20)
+
+        # Buttons
+        tk.Button(self.root, text="Upload Parent 1 Image", command=lambda: self.upload_image("parent1"), bg="#4CAF50", fg="white", font=("Arial", 12)).pack(pady=5)
+        tk.Button(self.root, text="Upload Parent 2 Image", command=lambda: self.upload_image("parent2"), bg="#4CAF50", fg="white", font=("Arial", 12)).pack(pady=5)
+        tk.Button(self.root, text="Upload Compare Image", command=lambda: self.upload_image("compare"), bg="#4CAF50", fg="white", font=("Arial", 12)).pack(pady=5)
+        tk.Button(self.root, text="Compare Faces", command=self.run_recognition, bg="#2196F3", fg="white", font=("Arial", 12)).pack(pady=10)
+
+        # Initialize text-to-speech
+        self.engine = pyttsx3.init()
+        voices = self.engine.getProperty('voices')
+        self.engine.setProperty('voice', voices[0].id)
+        self.engine.setProperty('rate', 170)
+
+        # Image storage
+        self.parent1_image = None
+        self.parent2_image = None
+        self.compare_image = None
+
+    def upload_image(self, image_type):
+        file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png")])
+        if file_path:
+            img = Image.open(file_path)
+            img = img.resize((150, 150), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            
+            if image_type == "parent1":
+                self.parent1_image = file_path
+                self.parent1_label.config(image=photo, text="")
+                self.parent1_label.image = photo
+                self.result_label.config(text="Parent 1 image loaded!")
+            elif image_type == "parent2":
+                self.parent2_image = file_path
+                self.parent2_label.config(image=photo, text="")
+                self.parent2_label.image = photo
+                self.result_label.config(text="Parent 2 image loaded!")
+            else:  # compare
+                self.compare_image = file_path
+                self.compare_label.config(image=photo, text="")
+                self.compare_label.image = photo
+                self.result_label.config(text="Compare image loaded!")
 
     def run_recognition(self):
-        video_capture = cv2.VideoCapture(0)
+        if not (self.parent1_image and self.parent2_image and self.compare_image):
+            self.result_label.config(text="Please upload all images!")
+            return
 
-        if not video_capture.isOpened():
-            sys.exit('Video source not found...')
+        # Load compare image
+        compare_image = face_recognition.load_image_file(self.compare_image)
+        compare_encodings = face_recognition.face_encodings(compare_image)
 
-        while True:
-            ret, frame = video_capture.read()
+        if not compare_encodings:
+            self.result_label.config(text="No face detected in compare image!")
+            return
 
-            # Only process every other frame of video to save time
-            if self.process_current_frame:
-                # Resize frame of video to 1/4 size for faster face recognition processing
-                small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+        compare_encoding = compare_encodings[0]
+        face_distances = face_recognition.face_distance(self.known_face_encodings, compare_encoding)
+        matches = face_recognition.compare_faces(self.known_face_encodings, compare_encoding)
 
-                # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
-                rgb_small_frame = numpy.ascontiguousarray(small_frame[:, :, ::-1])
+        # Find best match
+        best_match_index = np.argmin(face_distances)
+        if matches[best_match_index]:
+            name = self.known_face_names[best_match_index]
+            confidence = face_confidence(face_distances[best_match_index])
+            result_text = f"You look most like {name} with {confidence} confidence!"
+        else:
+            result_text = "No strong match with either parent!"
 
-                # Find all the faces and face encodings in the current frame of video
-                self.face_locations = face_recognition.face_locations(rgb_small_frame)
-                self.face_encodings = face_recognition.face_encodings(rgb_small_frame, self.face_locations)
+        # Update UI and speak result
+        self.result_label.config(text=result_text)
+        self.engine.say(result_text)
+        self.engine.runAndWait()
 
-                self.face_names = []
-                for face_encoding in self.face_encodings:
-                    # See if the face is a match for the known face(s)
-                    matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
-                    name = "Unknown"
-                    confidence = '???'
+        # Highlight matched parent
+        if "parent1" in result_text.lower():
+            self.parent1_label.config(bg="#ffeb3b")
+            self.parent2_label.config(bg="#f0f0f0")
+        elif "parent2" in result_text.lower():
+            self.parent2_label.config(bg="#ffeb3b")
+            self.parent1_label.config(bg="#f0f0f0")
+        else:
+            self.parent1_label.config(bg="#f0f0f0")
+            self.parent2_label.config(bg="#f0f0f0")
 
-                    # Calculate the shortest distance to face
-                    face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
-
-                    best_match_index = np.argmin(face_distances)
-                    if matches[best_match_index]:
-                        name = self.known_face_names[best_match_index]
-                        confidence = face_confidence(face_distances[best_match_index])
-
-                    self.face_names.append(f'{name} ({confidence})')
-
-            self.process_current_frame = not self.process_current_frame
-
-            # Display the results
-            for (top, right, bottom, left), name in zip(self.face_locations, self.face_names):
-                # Scale back up face locations since the frame we detected in was scaled to 1/4 size
-                top *= 4
-                right *= 4
-                bottom *= 4
-                left *= 4
-
-                # Create the frame with the name
-                cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
-                cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 0, 255), cv2.FILLED)
-                cv2.putText(frame, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 1)
-
-            # Display the resulting image
-            cv2.imshow('Face Recognition', frame)
-
-            # Hit 'q' on the keyboard to quit!
-            if cv2.waitKey(1) == ord('q'):
-                break
-
-        # Release handle to the webcam
-        video_capture.release()
-        cv2.destroyAllWindows()
+    def run(self):
+        self.root.mainloop()
 
 
 if __name__ == '__main__':
     fr = FaceRecognition()
-    fr.run_recognition()
-
+    fr.run()
 
 
